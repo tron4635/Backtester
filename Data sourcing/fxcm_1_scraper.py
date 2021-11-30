@@ -22,12 +22,13 @@ for pair in tdr.get_available_symbols():
 
 # Scrape time
 import os
-dirname = os.path.dirname(__file__)
-directory = os.path.join(dirname, 'Data/')
+#dirname = os.path.dirname(__file__)
+directory = os.path.dirname(os.getcwd())
+directory = directory + '/Data/'
 if not os.path.exists(directory):
     os.makedirs(directory)
 #directory = "../Data/"
-#directory = Path(__file__)
+#directory = Path(__file__).parent
 print(directory)
 symbol = "AUDNZD"
 for year in years:

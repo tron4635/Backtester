@@ -13,8 +13,8 @@ from io import StringIO
 from pathlib import Path
 
 import os
-dirname = os.path.dirname(__file__)
-directory = os.path.join(dirname, 'Data/')
+directory = os.path.dirname(os.getcwd())
+directory = directory + '/Data/'
 directory2 = directory + "HDF5/"
 hdf5_file = directory + "HDF5/FxTickData.h5"
 if not os.path.exists(directory2):
