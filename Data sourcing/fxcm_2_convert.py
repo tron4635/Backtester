@@ -12,8 +12,13 @@ import gzip
 from io import StringIO
 from pathlib import Path
 
-directory = "/Users/thaddausengelhardt/Documents/quant_python/Datadownload/Results/"
-hdf5_file = "/Users/thaddausengelhardt/Documents/quant_python/Datadownload/Results/HDF5/FxTickData.h5"
+import os
+dirname = os.path.dirname(__file__)
+directory = os.path.join(dirname, 'Data/')
+directory2 = directory + "HDF5/"
+hdf5_file = directory + "HDF5/FxTickData.h5"
+if not os.path.exists(directory2):
+    os.makedirs(directory2)
 
 for file in os.listdir(directory):
     if file.endswith('.gz'):
