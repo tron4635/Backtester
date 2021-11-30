@@ -9,7 +9,7 @@ from fxcmpy import fxcmpy_tick_data_reader as tdr
 import os
 import gzip
 from io import StringIO
-import simpleaudio as sa
+#import simpleaudio as sa
 from pathlib import Path
 
 # Construct the years, weeks and symbol lists required for the scraper.
@@ -21,8 +21,13 @@ for pair in tdr.get_available_symbols():
         symbols.append(pair)
 
 # Scrape time
-directory = "/Users/thaddausengelhardt/Documents/quant_python/Datadownload/Results/"
-#directory = Path(__file__).parent
+import os
+dirname = os.path.dirname(__file__)
+directory = os.path.join(dirname, 'Data/')
+if not os.path.exists(directory):
+    os.makedirs(directory)
+#directory = "../Data/"
+#directory = Path(__file__)
 print(directory)
 symbol = "AUDNZD"
 for year in years:
