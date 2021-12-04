@@ -1,5 +1,11 @@
-# folder to ignore
+# folders to ignore
 Data/
+build/
+
+# OS generated files #
+######################
+.DS_Store
+.DS_Store?
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -8,6 +14,7 @@ __pycache__/
 
 # C extensions
 *.so
+*.c
 
 # Distribution / packaging
 .Python
