@@ -1,7 +1,13 @@
 import numpy as np
 import pandas as pd
-import logging
+import logging, sys
 import datetime as dt
+import time
+from tqdm import tqdm #progress bar
+import matplotlib.pyplot as plt
+import matplotlib.dates as md
+
+logging.basicConfig(stream=sys.stderr, format='%(asctime)s %(message)s', level=logging.INFO)
 
 LATENCY =  200 # ms latency
 SLIPPAGE = 0.0003
@@ -27,7 +33,10 @@ class strat():
         self.min_pos_type_pct = False # toggle whether min_pos_increment size is in % of cash or in currency
         self.desired_size = 0
         self.orderManager = orderManager
-        
+        self.currentBid = None
+        self.currentAsk = None
+        self.currentTimestamp = None
+
         # sizing table/buckets
         # linear interpolation between buckets
         # at what outperformance/stddev do you want to have what position (in % of total cash)
@@ -77,12 +86,13 @@ class strat():
             self.desired_size = 0
 
         #print('Desired position size: ' + str(self.desired_size))
-        logging.info('Desired position size: ' + str(self.desired_size))
+        logging.debug('Desired position size: ' + str(self.desired_size))
     
-    def new_priceUpdate(self, newPrice, lastClose):
+    def new_priceUpdate(self, timestamp, newPrice, lastClose):
         #print("strat new price update")
         self.currentBid = newPrice
         self.currentAsk = newPrice
+        self.currentTimestamp = timestamp
         pct_outperformance = newPrice / lastClose - 1.0
         self.check_trade_initiation(pct_outperformance)
         
@@ -107,10 +117,20 @@ class strat():
         
         if trade:
             self.orderManager.place_order(size2trade, price2trade)
-            logging.info('Placed order at ' + str(size2trade) + ' at ' +  str(price2trade))
+            # calculate average prices for P&L calculation
+            if size2trade > 0:
+                oldQuantity = self.orderManager.totalBuyQuantity
+                self.orderManager.averageBuyPrice = (oldQuantity * self.orderManager.averageBuyPrice + size2trade * price2trade) / (oldQuantity + size2trade)
+                self.orderManager.totalBuyQuantity = self.orderManager.totalBuyQuantity + size2trade
+            else:
+                oldQuantity = self.orderManager.totalSellQuantity
+                self.orderManager.averageSellPrice = (oldQuantity * self.orderManager.averageSellPrice + size2trade * price2trade) / (oldQuantity + size2trade)
+                self.orderManager.totalSellQuantity = self.orderManager.totalSellQuantity + size2trade
+
+            logging.debug('Placed order for ' + str(size2trade) + ' at ' +  str(price2trade))
 
         else:
-            logging.info('No order placed')
+            logging.debug('No order placed')
 
     def update_params(self, mean, stddev):
         self.param_mean = mean
@@ -122,19 +142,21 @@ class strat():
         # P&L
         PnL = 0
         Position = 0
-        for order in self.orderManager.orderqueue:
-            PnL = PnL + order.calculate_PnL(self.currentAsk)
-            Position = Position + order.size
-        
+        #for order in self.orderManager.orderqueue:
+        #    PnL = PnL + order.calculate_PnL(self.currentAsk)
+        #    Position = Position + order.size
+        Position = self.currentAsk * (self.orderManager.totalSellQuantity + self.orderManager.totalBuyQuantity)
+        PnL = self.orderManager.totalBuyQuantity * (self.currentAsk - self.orderManager.averageBuyPrice) + self.orderManager.totalSellQuantity * (self.currentAsk - self.orderManager.averageSellPrice)
+
         self.position = Position
         #print('Current P&L: ' + str(PnL) + ', position: ' + str(Position))
 
         global currentstats
-        currentstats.append([dt.datetime.now(), PnL, Position, self.currentAsk])
+        currentstats.append([self.currentTimestamp, PnL, Position, self.currentAsk])
 
 class order():
-    def __init__(self, size, limit=0):
-        self.timestamp = dt.datetime.now()
+    def __init__(self, timestamp, size, limit=0):
+        self.timestamp = timestamp
         self.filled = None
         self.filledPrice = None
         self.size = size
@@ -148,6 +170,7 @@ class order():
         self.filledPrice = limit
 
     def calculate_PnL(self, price):
+        # calculate PnL for a single order
         pct_gain = (price - self.filledPrice) / self.filledPrice
         #print('P&L of order: ' + str(pct_gain * self.size))
         return pct_gain * self.size
@@ -155,12 +178,17 @@ class order():
 class orderManager():
     def __init__(self):
         self.orderqueue = [] # array holding instances of order class
-        self.currentBid = None
-        self.currentAsk = None
+        #self.currentBid = None
+        #self.currentAsk = None
+        #self.currentTimestamp = None
+        self.averageBuyPrice = 0.0
+        self.averageSellPrice = 0.0
+        self.totalBuyQuantity = 0.0
+        self.totalSellQuantity = 0.0
         
-    def place_order(self, size, limit=0):
+    def place_order(self, timestamp, size, limit=0):
         # omitting optional argument 'limit' means market order
-        myOrder = order(size, limit)
+        myOrder = order(timestamp, size, limit)
         self.orderqueue.append(myOrder)
     
     def check_active_orders(self):
@@ -176,17 +204,23 @@ def main():
     om = orderManager()
     myStrat = strat(om, 100000)
 
-    df = pd.read_hdf('./Results/HDF5/FxTickData.h5')
+    logging.info('Reading HDF5 data')
+    df = pd.read_hdf('./Data/HDF5/FxTickData.h5')
+    logging.info('Sorting index')
     df = df.sort_index()
     # calculate mid prices
+    logging.info('Calculating mid prices')
     df["mid"] = (df["Bid"] + df["Ask"])/2
-    df = df.drop('Bid', 1)
-    df = df.drop('Ask', 1)
+    df = df.drop(columns='Bid')
+    df = df.drop(columns='Ask')
 
+    logging.info('Resampling to OHLC')
     ohlc = df.resample('D').ohlc()
-    ohlc = ohlc.drop(('mid', 'open'), 1)
-    ohlc = ohlc.drop(('mid', 'high'), 1)
-    ohlc = ohlc.drop(('mid', 'low'), 1)
+    ohlc = ohlc.drop(('mid', 'open'),1)
+    ohlc = ohlc.drop(('mid', 'high'),1)
+    ohlc = ohlc.drop(('mid', 'low'),1)
+
+    logging.info('Calculating percentage change')
     daily_return = ohlc.pct_change(1)
 
     # pick starting time
@@ -195,29 +229,50 @@ def main():
     # run loop looping through every new timestamp
     # check if new parameters need to be estimated (e.g. due to new day)
     training_set = daily_return.loc['2020-1-9':'2020-1-22']
+
+    logging.info('Estimating parameter')
     mean, std = estimate_parameters(training_set[('mid', 'close')])
     myStrat.update_params(mean, std)
-    last_close = ohlc.loc['2020-1-22', ('mid', 'close')]
+    last_close = ohlc.loc['2020-1-21', ('mid', 'close')]
 
-    new_day = df.loc['2020-1-23']
+    new_day = df.loc['2020-1-22']
     #new_day = new_day.head(n=10)
     datapoints_length = len(new_day.index)
     p = 0
 
-    for index, row in new_day.iterrows():
+    logging.info('Starting iteration loop')
+    price_now = None
+    start_time = time.time()
+
+    for index, row in tqdm(new_day.iterrows(), total=len(new_day)):
         #print(index)
         #print(row['mid'])
+        timestamp = index
         price_now = row['mid']
         #om.new_priceUpdate(price_now)
-        myStrat.new_priceUpdate(price_now, last_close)
+        myStrat.new_priceUpdate(timestamp, price_now, last_close)
 
-        p = p + 1
-        print(p/datapoints_length)
+        #p = p + 1
+        #print(p/datapoints_length)
+    
+    logging.info("Loop completed in --- %s seconds ---" % (time.time() - start_time))
 
     print('done')
     df2 = pd.DataFrame(currentstats, columns=['time', 'pnl', 'pos', 'price'])
     df2.set_index('time')
-    df2.plot(y='pnl')
 
-    df2.to_pickle('sales_df.pkl')
+    df2.to_pickle('./Data/Pickles/result.pkl')
 
+    #plt = df2.plot(y='pnl')
+    #plt.ioff()
+    #plt.gcf().show()
+    df2.plot(kind='line',x='time',y='pnl',color='blue')
+    plt.setp(plt.gca().xaxis.get_majorticklabels(),'rotation', 60)
+    plt.xlabel("time")
+    plt.ylabel("price")
+    plt.gca().xaxis.set_major_locator(md.MinuteLocator(byminute = [0]))
+    plt.gca().xaxis.set_major_formatter(md.DateFormatter('%H:%M'))
+    plt.show(block=True)
+
+if __name__ == "__main__":
+    main()
