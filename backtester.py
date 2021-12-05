@@ -3,11 +3,13 @@ import pandas as pd
 import logging, sys
 import datetime as dt
 import time
+from pandas._libs.tslibs.timestamps import Timestamp
 from tqdm import tqdm #progress bar
 import matplotlib.pyplot as plt
 import matplotlib.dates as md
 
 logging.basicConfig(stream=sys.stderr, format='%(asctime)s %(message)s', level=logging.INFO)
+SHOW_GRAPH = True
 
 LATENCY =  200 # ms latency
 SLIPPAGE = 0.0003
@@ -116,6 +118,10 @@ class strat():
             trade = True
         
         if trade:
+            date1 = Timestamp("2020-01-23 15:35:38.783000")
+            #date1 = dt.datetime.timestamp(date1)
+            if self.currentTimestamp>date1:
+                print('now')
             self.orderManager.place_order(size2trade, price2trade)
             # calculate average prices for P&L calculation
             if size2trade > 0:
@@ -127,9 +133,9 @@ class strat():
                 self.orderManager.averageSellPrice = (oldQuantity * self.orderManager.averageSellPrice + size2trade * price2trade) / (oldQuantity + size2trade)
                 self.orderManager.totalSellQuantity = self.orderManager.totalSellQuantity + size2trade
 
-            logging.debug('Placed order for ' + str(size2trade) + ' at ' +  str(price2trade))
+            logging.info('Placed order for ' + str(size2trade) + ' at ' +  str(price2trade) + ' at timestamp ' + str(self.currentTimestamp) + ' bid at ' + str(self.currentBid))
 
-        else:
+        else: 
             logging.debug('No order placed')
 
     def update_params(self, mean, stddev):
@@ -145,7 +151,8 @@ class strat():
         #for order in self.orderManager.orderqueue:
         #    PnL = PnL + order.calculate_PnL(self.currentAsk)
         #    Position = Position + order.size
-        Position = self.currentAsk * (self.orderManager.totalSellQuantity + self.orderManager.totalBuyQuantity)
+        #Position = self.currentAsk * (self.orderManager.totalSellQuantity + self.orderManager.totalBuyQuantity)
+        Position = self.orderManager.totalSellQuantity + self.orderManager.totalBuyQuantity
         PnL = self.orderManager.totalBuyQuantity * (self.currentAsk - self.orderManager.averageBuyPrice) + self.orderManager.totalSellQuantity * (self.currentAsk - self.orderManager.averageSellPrice)
 
         self.position = Position
@@ -213,7 +220,7 @@ def main():
     df["mid"] = (df["Bid"] + df["Ask"])/2
     df = df.drop(columns='Bid')
     df = df.drop(columns='Ask')
-
+    
     logging.info('Resampling to OHLC')
     ohlc = df.resample('D').ohlc()
     ohlc = ohlc.drop(('mid', 'open'),1)
@@ -228,14 +235,15 @@ def main():
     currentday = df.index[i].date
     # run loop looping through every new timestamp
     # check if new parameters need to be estimated (e.g. due to new day)
-    training_set = daily_return.loc['2020-1-9':'2020-1-22']
+    training_set = daily_return.loc['2020-1-9':'2020-1-21']
 
     logging.info('Estimating parameter')
     mean, std = estimate_parameters(training_set[('mid', 'close')])
     myStrat.update_params(mean, std)
-    last_close = ohlc.loc['2020-1-21', ('mid', 'close')]
+    last_close = ohlc.loc['2020-1-22', ('mid', 'close')]
+    logging.info(f"Mean: {mean}, Std: {std}, Last close: {last_close}")
 
-    new_day = df.loc['2020-1-22']
+    new_day = df.loc['2020-1-23']
     #new_day = new_day.head(n=10)
     datapoints_length = len(new_day.index)
     p = 0
@@ -251,28 +259,63 @@ def main():
         price_now = row['mid']
         #om.new_priceUpdate(price_now)
         myStrat.new_priceUpdate(timestamp, price_now, last_close)
-
-        #p = p + 1
-        #print(p/datapoints_length)
     
     logging.info("Loop completed in --- %s seconds ---" % (time.time() - start_time))
 
-    print('done')
     df2 = pd.DataFrame(currentstats, columns=['time', 'pnl', 'pos', 'price'])
-    df2.set_index('time')
-
+    df2 = df2.set_index('time')
+    #df2.set_index(pd.to_datetime(df2['time']))
+    #df2 = df2.set_index(pd.DatetimeIndex(df2['time']))
+    print(type(df2.index))
     df2.to_pickle('./Data/Pickles/result.pkl')
 
-    #plt = df2.plot(y='pnl')
-    #plt.ioff()
-    #plt.gcf().show()
-    df2.plot(kind='line',x='time',y='pnl',color='blue')
-    plt.setp(plt.gca().xaxis.get_majorticklabels(),'rotation', 60)
-    plt.xlabel("time")
-    plt.ylabel("price")
-    plt.gca().xaxis.set_major_locator(md.MinuteLocator(byminute = [0]))
-    plt.gca().xaxis.set_major_formatter(md.DateFormatter('%H:%M'))
-    plt.show(block=True)
+    total_pnl = df2["pnl"].iloc[-1]
+    max_pnl = df2["pnl"].max()
+    min_pnl = df2["pnl"].min()
+    max_position = df2["pos"].max()
+    min_position = df2["pos"].min()
+
+    final_output_string = f"Statistics:\n"   \
+                        f"Total PnL: {total_pnl}\n"   \
+                        f"Min/Max Pnl: {min_pnl},{max_pnl}\n"   \
+                        f"Min/Max Pos: {min_position},{max_position}\n"   \
+
+    logging.info(final_output_string)
+
+    if SHOW_GRAPH:
+       # fig = df2.plot(subplots=True, layout=(1,2))
+        
+       # fig.add_subplot(221)  
+
+        fig = plt.figure()
+        subplot1 = fig.add_subplot(3,1,1)
+        subplot2 = fig.add_subplot(3,1,2)
+        subplot3 = fig.add_subplot(3,1,3)
+
+        df2["price"].plot(ax = subplot1, sharex=True, kind = 'line', y = 'price', color = 'blue', use_index = True, linewidth = 0.5)
+        subplot1.xaxis.set_major_locator(md.MinuteLocator(byminute = [0]))
+        subplot1.xaxis.set_major_formatter(md.DateFormatter('%H:%M'))
+        subplot1.set(ylabel = "price")
+        subplot1.tick_params('x', labelrotation=80)
+        subplot1.axhline(last_close, color='red', linestyle="--", linewidth=1)
+        subplot1.axhline(last_close+std, color='green', linestyle="--", linewidth=1)
+        subplot1.axhline(last_close-std, color='green', linestyle="--", linewidth=1)
+
+        df2["pnl"].plot(ax = subplot2, sharex=True, kind = 'line', y = 'price', color = 'green', use_index = True, linewidth = 0.5)
+        subplot2.xaxis.set_major_locator(md.MinuteLocator(byminute = [0]))
+        subplot2.xaxis.set_major_formatter(md.DateFormatter('%H:%M'))
+        subplot2.set(ylabel = "pnl")
+        subplot2.tick_params('x', labelrotation=80)
+
+        df2["pos"].plot(ax = subplot3, sharex=True, kind = 'line', y = 'price', color = 'red', use_index = True, linewidth = 0.5)
+        subplot3.xaxis.set_major_locator(md.MinuteLocator(byminute = [0]))
+        subplot3.xaxis.set_major_formatter(md.DateFormatter('%H:%M'))
+        subplot3.set(ylabel = "pos")
+        subplot3.tick_params('x', labelrotation=80)
+
+        fig.tight_layout()
+       
+        plt.show(block=True)
 
 if __name__ == "__main__":
     main()
